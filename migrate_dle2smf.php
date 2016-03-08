@@ -94,10 +94,11 @@ function insert($table_name, &$row, $exclude_fields = array()) {
 }
 
 $board_id2newid = array();
+$board_newid2newparent = array();
 //$board_childlevel = array();
 
 function board_insert_recursive(&$board, &$boards, $parentid, $level) {
-	global $board_id2newid;
+	global $board_id2newid, $board_newid2newparent;
 
 	if (empty($board))
 		return;
@@ -107,6 +108,7 @@ function board_insert_recursive(&$board, &$boards, $parentid, $level) {
 		$b['child_level'] = $level;
 		$b['id_board']    = insert('smf_boards', $b, array('oldid'));
 		$board_id2newid[$b['oldid']] = $b['id_board'];
+		$board_newid2newparent[$b['id_board']] = $b['id_parent'];
 		//$board_childlevel[$b['id_board']] = $level;
 
 		board_insert_recursive($boards[$b['oldid']], $boards, $b['id_board'], $level+1);
@@ -166,7 +168,7 @@ while($row = mysql_fetch_assoc($ret)) {
 
 [url=http://zoodb.ru/'.$row['url'].']ZOO DATABASE[/url]
 
-[url=/]Галерея изображений[/url][/center]',
+[url=http://zoodb.ru/zoogallery/thumbnails.php?search='.urlencode(ucfirst($row['latin'])).'&submit=%EF%EE%E8%F1%EA&album=search&title=on&newer_than=&caption=on&older_than=&keywords=on&type=AND]Галерея изображений[/url][/center]',
 		'icon'		=> 'clip',
 		'approved'	=> 1,
 	);
@@ -175,10 +177,13 @@ while($row = mysql_fetch_assoc($ret)) {
 	$msgIdEsc = mysql_real_escape_string($messageId);
 	mysql_query('UPDATE `smf_messages` SET id_msg_modified="'.$msgIdEsc.'" WHERE id_msg="'.$msgIdEsc.'"');
 	mysql_query('UPDATE `smf_topics` SET id_first_msg="'.$msgIdEsc.'", id_last_msg="'.$msgIdEsc.'" WHERE id_topic="'.mysql_real_escape_string($topicId).'"');
-	mysql_query('UPDATE `smf_boards` SET id_last_msg="'.$msgIdEsc.'", id_msg_updated="'.$msgIdEsc.'" WHERE id_board="'.mysql_real_escape_string($boardId).'"');
+	do {
+		mysql_query('UPDATE `smf_boards` SET id_last_msg="'.$msgIdEsc.'", id_msg_updated="'.$msgIdEsc.'" WHERE id_board="'.mysql_real_escape_string($boardId).'"');
+		$boardId = $board_newid2newparent[$boardId];
+	} while($boardId > 0);
 }
 
-
+/*
 foreach($board_id2newid as $id => $newid) {
 	$ret = mysql_query("SELECT COUNT(*) topic_count FROM smf_topics WHERE id_board='".mysql_real_escape_string($newid)."'");
 	$res = mysql_fetch_assoc($ret);
@@ -192,5 +197,38 @@ foreach($board_id2newid as $id => $newid) {
 
 	mysql_query('UPDATE smf_boards SET num_topics="'.mysql_real_escape_string($topic_count).'", num_posts="'.mysql_real_escape_string($message_count).'" WHERE id_board="'.mysql_real_escape_string($newid).'"');
 }
+*/
 
+function board_recalc_recursive(&$board, &$boards) {
+	if (empty($board))
+		return array(0, 0);
+
+	$topic_count_total   = 0;
+	$message_count_total = 0;
+
+	foreach ($board as &$b) {
+		list($topic_count, $message_count) = board_recalc_recursive($boards[$b['oldid']], $boards);
+
+		$ret = mysql_query("SELECT COUNT(*) topic_count FROM smf_topics WHERE id_board='".mysql_real_escape_string($b['id_board'])."'");
+		$res = mysql_fetch_assoc($ret);
+
+		$topic_count += $res['topic_count'];
+
+		$ret = mysql_query("SELECT COUNT(*) message_count FROM smf_messages WHERE id_board='".mysql_real_escape_string($b['id_board'])."'");
+		$res = mysql_fetch_assoc($ret);
+
+		$message_count += $res['message_count'];
+
+		//echo('UPDATE smf_boards SET num_topics="'.mysql_real_escape_string($topic_count).'", num_posts="'.mysql_real_escape_string($message_count).'" WHERE id_board="'.mysql_real_escape_string($b['id_board']).'"'."\n");
+		mysql_query('UPDATE smf_boards SET num_topics="'.mysql_real_escape_string($topic_count).'", num_posts="'.mysql_real_escape_string($message_count).'" WHERE id_board="'.mysql_real_escape_string($b['id_board']).'"');
+
+		$topic_count_total   += $topic_count;
+		$message_count_total += $message_count;
+		
+	}
+
+	return array($topic_count_total, $message_count_total);
+}
+
+board_recalc_recursive($boards[0], $boards);
 ?>
